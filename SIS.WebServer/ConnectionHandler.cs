@@ -28,14 +28,14 @@ namespace SIS.WebServer
             this.serverRoutingTable = serverRoutingTable;
         }
 
-        private  async Task<IHttpRequest> ReadRequest()
+        private async Task<IHttpRequest> ReadRequest()
         {
             var result = new StringBuilder();
             var data = new ArraySegment<byte>(new byte[1024]);
 
             while (true)
             {
-                int numberOfBytesToRead = this.client.Receive(data.Array, SocketFlags.None);
+                int numberOfBytesToRead =await this.client.ReceiveAsync(data.Array, SocketFlags.None);
 
                 if (numberOfBytesToRead == 0)
                 {
