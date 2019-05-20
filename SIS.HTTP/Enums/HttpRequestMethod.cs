@@ -3,7 +3,7 @@
     public enum HttpRequestMethod
     {
         Get,
-        Post, 
+        Post,
         Put,
         Delete
     }

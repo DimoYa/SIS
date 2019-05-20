@@ -1,33 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Web;
 using SIS.HTTP.Common;
-using SIS.HTTP.Cookies;
 using SIS.HTTP.Enums;
 using SIS.HTTP.Exceptions;
-using SIS.HTTP.Extensions;
 using SIS.HTTP.Headers;
-using SIS.HTTP.Sessions;
+using SIS.HTTP.Headers.Contracts;
+using SIS.HTTP.Requests.Contracts;
 
 namespace SIS.HTTP.Requests
 {
     public class HttpRequest : IHttpRequest
     {
-        private const char HttpRequestUrlQuerySeparator = '?';
-
-        private const char HttpRequestUrlFragmentSeparator = '#';
-
-        private const string HttpRequestHeaderNameValueSeparator = ": ";
-
-        private const string HttpRequestCookiesSeparator = "; ";
-
-        private const char HttpRequestCookieNameValueSeparator = '=';
-
-        private const char HttpRequestParameterSeparator = '&';
-
-        private const char HttpRequestParameterNameValueSeparator = '=';
-
         public HttpRequest(string requestString)
         {
             CoreValidator.ThrowIfNullOrEmpty(requestString, nameof(requestString));
@@ -35,193 +19,138 @@ namespace SIS.HTTP.Requests
             this.FormData = new Dictionary<string, object>();
             this.QueryData = new Dictionary<string, object>();
             this.Headers = new HttpHeaderCollection();
-            this.Cookies = new HttpCookieCollection();
 
             this.ParseRequest(requestString);
         }
 
         public string Path { get; private set; }
-
         public string Url { get; private set; }
-
         public Dictionary<string, object> FormData { get; }
-
         public Dictionary<string, object> QueryData { get; }
-
         public IHttpHeaderCollection Headers { get; }
-
-        public IHttpCookieCollection Cookies { get; }
-
         public HttpRequestMethod RequestMethod { get; private set; }
 
-        public IHttpSession Session { get; set; }
-
-        public HttpRequestMethod RequestMthod => throw new NotImplementedException();
-
-        IHttpCookieCollection IHttpRequest.Cookies => throw new NotImplementedException();
-
-        private bool IsValidRequestLine(string[] requestLine)
+        private bool IsValidRequestLine(string[] requestLineParams)
         {
-            return requestLine.Length == 3
-                   && requestLine[2].ToLower()
-                   != GlobalConstants.HttpOneProtocolFragment;
+            if (requestLineParams.Length != 3
+                || requestLineParams[2] != GlobalConstants.HttpOneProtocolFragment)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private bool IsValidRequestQueryString(string queryString, string[] queryParameters)
         {
-            return !(string.IsNullOrEmpty(queryString) || queryParameters.Length < 1);
+            CoreValidator.ThrowIfNullOrEmpty(queryString, nameof(queryString));
+
+            return true; //TODO: REGEX QUERY STRING
         }
 
-        private void ParseRequestMethod(string[] requestLine)
+        private bool HasQueryString()
         {
-            bool parseMethodResult = Enum.TryParse<HttpRequestMethod>(requestLine[0].Capitalize(), out HttpRequestMethod parsedMethod);
-
-            if (!parseMethodResult) throw new BadRequestException();
-
-            this.RequestMethod = parsedMethod;
+            return this.Url.Split('?').Length > 1;
         }
 
-        private void ParseRequestUrl(string[] requestLine)
+        private IEnumerable<string> ParsePlainRequestHeaders(string[] requestLines)
         {
-            this.Url = requestLine[1];
+            for (int i = 1; i < requestLines.Length - 1; i++)
+            {
+                if (!string.IsNullOrEmpty(requestLines[i]))
+                {
+                    yield return requestLines[i];
+                }
+            }
+        }
+
+        private void ParseRequestMethod(string[] requestLineParams)
+        {
+            bool parseResult = HttpRequestMethod.TryParse(requestLineParams[0], true,
+                out HttpRequestMethod method);
+
+            if (!parseResult)
+            {
+                throw new BadRequestException(
+                    string.Format(GlobalConstants.UnsupportedHttpMethodExceptionMessage,
+                        requestLineParams[0]));
+            }
+
+            this.RequestMethod = method;
+        }
+
+        private void ParseRequestUrl(string[] requestLineParams)
+        {
+            this.Url = requestLineParams[1];
         }
 
         private void ParseRequestPath()
         {
-            this.Path =
-                this.Url.Split(new[] { HttpRequestUrlQuerySeparator, HttpRequestUrlFragmentSeparator }, StringSplitOptions.RemoveEmptyEntries)[0];
+            this.Path = this.Url.Split('?')[0];
         }
 
-        private void ParseHeaders(string[] requestContent)
+        private void ParseRequestHeaders(string[] plainHeaders)
         {
-            int currentIndex = 0;
-
-            while (!string.IsNullOrEmpty(requestContent[currentIndex]))
-            {
-                string[] headerArguments = requestContent[currentIndex++].Split(HttpRequestHeaderNameValueSeparator);
-
-                this.Headers.AddHeader(new HttpHeader(headerArguments[0], headerArguments[1]));
-            }
-
-            if (!this.Headers.ContainsHeader(GlobalConstants.HostHeaderKey))
-            {
-                throw new BadRequestException();
-            }
+            plainHeaders.Select(plainHeader => plainHeader.Split(new[] { ':', ' ' }
+                , StringSplitOptions.RemoveEmptyEntries))
+                .ToList()
+                .ForEach(headerKeyValuePair => this.Headers.AddHeader(new HttpHeader(headerKeyValuePair[0], headerKeyValuePair[1])));
         }
 
-        private void ParseCookies()
+        private void ParseRequestQueryParameters()
         {
-            if (!this.Headers.ContainsHeader(HttpHeader.Cookie)) return;
-
-            string cookiesString = this.Headers.GetHeader(HttpHeader.Cookie).Value;
-
-            if (string.IsNullOrEmpty(cookiesString)) return;
-
-            string[] splitCookies = cookiesString.Split(HttpRequestCookiesSeparator);
-
-            foreach (var splitCookie in splitCookies)
+            if (this.HasQueryString())
             {
-                string[] cookieParts = splitCookie.Split(HttpRequestCookieNameValueSeparator, 2, StringSplitOptions.RemoveEmptyEntries);
-
-                if (cookieParts.Length != 2) continue;
-
-                string key = cookieParts[0];
-                string value = cookieParts[1];
-
-                this.Cookies.Add(new HttpCookie(key, value, false));
+                this.Url.Split('?', '#')[1]
+                    .Split('&')
+                    .Select(plainQueryParameter => plainQueryParameter.Split('='))
+                    .ToList()
+                    .ForEach(queryParameterKeyValuePair =>
+                        this.QueryData.Add(queryParameterKeyValuePair[0], queryParameterKeyValuePair[1]));
             }
         }
 
-        private void ParseQueryParameters()
+        private void ParseRequestFormDataParameters(string requestBody)
         {
-            if (!this.Url.Contains('?'))
+            if (!string.IsNullOrEmpty(requestBody))
             {
-                return;
-            }
-
-            string queryString = this.Url
-                .Split(new[] { '?', '#' }, StringSplitOptions.None)[1];
-
-            if (string.IsNullOrWhiteSpace(queryString))
-            {
-                return;
-            }
-
-            string[] queryParameters = queryString.Split('&');
-
-            if (!this.IsValidRequestQueryString(queryString, queryParameters))
-            {
-                throw new BadRequestException();
-            }
-
-            foreach (var queryParameter in queryParameters)
-            {
-                string[] parameterArguments = queryParameter
-                    .Split('=', StringSplitOptions.None);
-
-                this.QueryData.Add(parameterArguments[0], parameterArguments[1]);
+                //TODO: Parse Multiple Parameters By Name
+                requestBody
+                    .Split('&')
+                    .Select(plainQueryParameter => plainQueryParameter.Split('='))
+                    .ToList()
+                    .ForEach(queryParameterKeyValuePair =>
+                        this.FormData.Add(queryParameterKeyValuePair[0], queryParameterKeyValuePair[1]));
             }
         }
 
-        private void ParseFormDataParameters(string formData)
+        private void ParseRequestParameters(string requestBody)
         {
-            if (string.IsNullOrEmpty(formData))
-            {
-                return;
-            }
-
-            string[] formDataParams = formData.Split(HttpRequestParameterSeparator);
-
-            foreach (var formDataParameter in formDataParams)
-            {
-                string[] parameterArguments = formDataParameter
-                    .Split(HttpRequestParameterNameValueSeparator, StringSplitOptions.None);
-
-                if (this.FormData.ContainsKey(parameterArguments[0]))
-                {
-                    if (this.FormData[parameterArguments[0]] is string ||
-                        !(this.FormData[parameterArguments[0]] is List<string>))
-                    {
-                        List<string> collection = new List<string> { this.FormData[parameterArguments[0]].ToString() };
-                        this.FormData[parameterArguments[0]] = collection;
-                    }
-
-                    ((List<string>)this.FormData[parameterArguments[0]]).Add(HttpUtility.UrlDecode(parameterArguments[1]));
-                }
-                else
-                {
-                    this.FormData.Add(parameterArguments[0], HttpUtility.UrlDecode(parameterArguments[1]));
-                }
-            }
-        }
-
-        private void ParseRequestParameters(string formData)
-        {
-            this.ParseQueryParameters();
-            this.ParseFormDataParameters(formData);
+            this.ParseRequestQueryParameters();
+            this.ParseRequestFormDataParameters(requestBody); //TODO: Split
         }
 
         private void ParseRequest(string requestString)
         {
-            string[] splitRequestContent = requestString
+            string[] splitRequestString = requestString
                 .Split(new[] { GlobalConstants.HttpNewLine }, StringSplitOptions.None);
 
-            string[] requestLine = splitRequestContent[0].Trim().
-                Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] requestLineParams = splitRequestString[0]
+                .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
-            if (!this.IsValidRequestLine(requestLine))
+            if (!this.IsValidRequestLine(requestLineParams))
             {
                 throw new BadRequestException();
             }
 
-            this.ParseRequestMethod(requestLine);
-            this.ParseRequestUrl(requestLine);
+            this.ParseRequestMethod(requestLineParams);
+            this.ParseRequestUrl(requestLineParams);
             this.ParseRequestPath();
 
-            this.ParseHeaders(splitRequestContent.Skip(1).ToArray());
-            this.ParseCookies();
+            this.ParseRequestHeaders(this.ParsePlainRequestHeaders(splitRequestString).ToArray());
+            //this.ParseCookies();
 
-            this.ParseRequestParameters(splitRequestContent[splitRequestContent.Length - 1]);
+            this.ParseRequestParameters(splitRequestString[splitRequestString.Length - 1]);
         }
     }
 }

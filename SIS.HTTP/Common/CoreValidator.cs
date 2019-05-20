@@ -16,9 +16,8 @@ namespace SIS.HTTP.Common
         {
             if (string.IsNullOrEmpty(text))
             {
-                throw new ArgumentException($"{name} cannot be null or empty.");
+                throw new ArgumentNullException($"{name} cannot be null or empty", name);
             }
         }
-
     }
 }

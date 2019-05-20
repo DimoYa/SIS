@@ -1,10 +1,8 @@
-﻿using SIS.HTTP.Cookies;
+﻿using System.Collections.Generic;
 using SIS.HTTP.Enums;
-using SIS.HTTP.Headers;
-using SIS.HTTP.Sessions;
-using System.Collections.Generic;
+using SIS.HTTP.Headers.Contracts;
 
-namespace SIS.HTTP.Requests
+namespace SIS.HTTP.Requests.Contracts
 {
     public interface IHttpRequest
     {
@@ -18,10 +16,6 @@ namespace SIS.HTTP.Requests
 
         IHttpHeaderCollection Headers { get; }
 
-        IHttpCookieCollection Cookies { get; }
-
         HttpRequestMethod RequestMethod { get; }
-
-        IHttpSession Session { get; set; }
     }
 }
